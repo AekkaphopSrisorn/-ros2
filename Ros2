@@ -1,0 +1,577 @@
+bash -c '
+set -e
+
+source /opt/ros/humble/setup.bash
+
+grep -qxF "source /opt/ros/humble/setup.bash" ~/.bashrc || echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+grep -qxF "source ~/ros2_ws/install/setup.bash" ~/.bashrc || echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
+
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+
+[ -d "my_robot_interfaces" ] || ros2 pkg create my_robot_interfaces
+cd ~/ros2_ws/src/my_robot_interfaces
+rm -rf include src
+mkdir -p msg srv
+
+cat << "EOF" > msg/HardwareStatus.msg
+int64 temperature
+bool are_motors_ready
+string debug_message
+EOF
+
+cat << "EOF" > srv/ComputeRectangleArea.srv
+float64 length
+float64 width
+---
+float64 area
+EOF
+
+cat << "EOF" > CMakeLists.txt
+cmake_minimum_required(VERSION 3.8)
+project(my_robot_interfaces)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/HardwareStatus.msg"
+  "srv/ComputeRectangleArea.srv"
+)
+
+ament_package()
+EOF
+
+cat << "EOF" > package.xml
+<?xml version="1.0"?>
+<package format="3">
+  <name>my_robot_interfaces</name>
+  <version>0.0.0</version>
+  <description>Package description</description>
+  <maintainer email="'"$USER"'@todo.todo">'"$USER"'</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+EOF
+
+cd ~/ros2_ws/src
+[ -d "my_py_pkg" ] || ros2 pkg create my_py_pkg --build-type ament_python --license Apache-2.0
+
+mkdir -p ~/ros2_ws/src/my_py_pkg/my_py_pkg
+mkdir -p ~/ros2_ws/src/my_py_pkg/resource
+touch ~/ros2_ws/src/my_py_pkg/resource/my_py_pkg
+cd ~/ros2_ws/src/my_py_pkg/my_py_pkg
+
+cat << "EOF" > my_first_node.py
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+
+class MyFirstNode(Node):
+    def __init__(self):
+        super().__init__("py_node")
+        self.get_logger().info("Hello from py_node!")
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = MyFirstNode()
+    rclpy.spin_once(node, timeout_sec=0.5)
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
+EOF
+
+cat << "EOF" > robot_news_station.py
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from example_interfaces.msg import String
+
+class RobotNewsStationNode(Node):
+    def __init__(self):
+        super().__init__("robot_news_station")
+        self.declare_parameter("robot_name", "C3P1")
+        self.declare_parameter("publish_frequency", 1.0)
+        
+        self.robot_name_ = self.get_parameter("robot_name").value
+        self.publish_frequency_ = self.get_parameter("publish_frequency").value
+
+        self.publisher_ = self.create_publisher(String, "robot_news", 10)
+        self.timer_ = self.create_timer(1.0 / self.publish_frequency_, self.publish_news)
+        self.get_logger().info("Robot News Station has been started")
+
+    def publish_news(self):
+        msg = String()
+        msg.data = "Hi, this is " + str(self.robot_name_) + " from the robot news station."
+        self.publisher_.publish(msg)
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = RobotNewsStationNode()
+    rclpy.spin(node)
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
+EOF
+
+cat << "EOF" > smartphone.py
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from example_interfaces.msg import String
+
+class SmartphoneNode(Node):
+    def __init__(self):
+        super().__init__("smartphone")
+        self.subscriber_ = self.create_subscription(
+            String, "robot_news", self.callback_robot_news, 10
+        )
+        self.get_logger().info("Smartphone has been started")
+
+    def callback_robot_news(self, msg):
+        self.get_logger().info(f"Received: {msg.data}")
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = SmartphoneNode()
+    rclpy.spin(node)
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
+EOF
+
+cat << "EOF" > hw_status_publisher.py
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from my_robot_interfaces.msg import HardwareStatus
+
+class HardwareStatusPublisherNode(Node):
+    def __init__(self):
+        super().__init__("hardware_status_publisher")
+        self.hw_status_publisher_ = self.create_publisher(
+            HardwareStatus, "hardware_status", 10
+        )
+        self.timer_ = self.create_timer(1.0, self.publish_hw_status)
+        self.get_logger().info("Hardware status publisher has been started.")
+
+    def publish_hw_status(self):
+        msg = HardwareStatus()
+        msg.temperature = 60
+        msg.are_motors_ready = True
+        msg.debug_message = "Nothing special here"
+        self.hw_status_publisher_.publish(msg)
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = HardwareStatusPublisherNode()
+    rclpy.spin(node)
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
+EOF
+
+cat << "EOF" > add_two_ints_server.py
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from example_interfaces.srv import AddTwoInts
+
+class AddTwoIntsServerNode(Node):
+    def __init__(self):
+        super().__init__("add_two_ints_server")
+        self.server_ = self.create_service(
+            AddTwoInts, "add_two_ints", self.callback_add_two_ints)
+        self.get_logger().info("Add two ints server has been started.")
+
+    def callback_add_two_ints(self, request, response):
+        response.sum = request.a + request.b
+        self.get_logger().info(str(request.a) + " + " + str(request.b) + " = " + str(response.sum))
+        return response
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = AddTwoIntsServerNode()
+    rclpy.spin(node)
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
+EOF
+
+cat << "EOF" > add_two_ints_client_no_oop.py
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from example_interfaces.srv import AddTwoInts
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = Node("add_two_ints_no_oop")
+
+    client = node.create_client(AddTwoInts, "add_two_ints")
+    while not client.wait_for_service(1.0):
+        node.get_logger().warn("Waiting for Server Add Two Ints...")
+
+    request = AddTwoInts.Request()
+    request.a = 3
+    request.b = 8
+
+    future = client.call_async(request)
+    rclpy.spin_until_future_complete(node, future)
+
+    try:
+        response = future.result()
+        node.get_logger().info(str(request.a) + " + " + str(request.b) + " = " + str(response.sum))
+    except Exception as e:
+        node.get_logger().error("Service call failed %r" % (e,))
+
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
+EOF
+
+cat << "EOF" > add_two_ints_client.py
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from functools import partial
+from example_interfaces.srv import AddTwoInts
+
+class AddTwoIntsClientNode(Node):
+    def __init__(self):
+        super().__init__("add_two_ints_client")
+        self.call_add_two_ints_server(6, 7)
+        self.call_add_two_ints_server(3, 1)
+        self.call_add_two_ints_server(5, 2)
+
+    def call_add_two_ints_server(self, a, b):
+        client = self.create_client(AddTwoInts, "add_two_ints")
+        while not client.wait_for_service(1.0):
+            self.get_logger().warn("Waiting for Server Add Two Ints...")
+
+        request = AddTwoInts.Request()
+        request.a = a
+        request.b = b
+
+        future = client.call_async(request)
+        future.add_done_callback(
+            partial(self.callback_call_add_two_ints, a=a, b=b))
+
+    def callback_call_add_two_ints(self, future, a, b):
+        try:
+            response = future.result()
+            self.get_logger().info(str(a) + " + " + str(b) + " = " + str(response.sum))
+        except Exception as e:
+            self.get_logger().error("Service call failed %r" % (e,))
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = AddTwoIntsClientNode()
+    rclpy.spin(node)
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
+EOF
+
+chmod +x ~/ros2_ws/src/my_py_pkg/my_py_pkg/*.py
+
+cat << "EOF" > ~/ros2_ws/src/my_py_pkg/setup.py
+from setuptools import find_packages, setup
+
+package_name = "my_py_pkg"
+
+setup(
+    name=package_name,
+    version="0.0.0",
+    packages=find_packages(exclude=["test"]),
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+    ],
+    install_requires=["setuptools"],
+    zip_safe=True,
+    maintainer="'"$USER"'",
+    maintainer_email="'"$USER"'@todo.todo",
+    description="Package description",
+    license="Apache-2.0",
+    tests_require=["pytest"],
+    entry_points={
+        "console_scripts": [
+            "py_node = my_py_pkg.my_first_node:main",
+            "robot_news_station = my_py_pkg.robot_news_station:main",
+            "smartphone = my_py_pkg.smartphone:main",
+            "hw_status_publisher = my_py_pkg.hw_status_publisher:main",
+            "add_two_ints_server = my_py_pkg.add_two_ints_server:main",
+            "add_two_ints_client = my_py_pkg.add_two_ints_client:main",
+            "add_two_ints_client_no_oop = my_py_pkg.add_two_ints_client_no_oop:main",
+        ],
+    },
+)
+EOF
+
+cat << "EOF" > ~/ros2_ws/src/my_py_pkg/package.xml
+<?xml version="1.0"?>
+<package format="3">
+  <name>my_py_pkg</name>
+  <version>0.0.0</version>
+  <description>Package description</description>
+  <maintainer email="'"$USER"'@todo.todo">'"$USER"'</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>example_interfaces</depend>
+  <depend>my_robot_interfaces</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
+EOF
+
+cd ~/ros2_ws/src
+[ -d "my_cpp_pkg" ] || ros2 pkg create my_cpp_pkg --build-type ament_cmake --license Apache-2.0
+mkdir -p ~/ros2_ws/src/my_cpp_pkg/src
+cd ~/ros2_ws/src/my_cpp_pkg/src
+
+cat << "EOF" > my_first_node.cpp
+#include "rclcpp/rclcpp.hpp"
+
+int main(int argc, char **argv) {
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<rclcpp::Node>("cpp_node");
+    RCLCPP_INFO(node->get_logger(), "Hello from cpp_node!");
+    rclcpp::shutdown();
+    return 0;
+}
+EOF
+
+cat << "EOF" > robot_news_station.cpp
+#include "rclcpp/rclcpp.hpp"
+#include "example_interfaces/msg/string.hpp"
+
+class RobotNewsStationNode : public rclcpp::Node {
+public:
+    RobotNewsStationNode() : Node("robot_news_station") {
+        publisher_ = this->create_publisher<example_interfaces::msg::String>("robot_news", 10);
+        timer_ = this->create_wall_timer(std::chrono::seconds(1), std::bind(&RobotNewsStationNode::publishNews, this));
+        RCLCPP_INFO(this->get_logger(), "Robot News Station (C++) started.");
+    }
+private:
+    void publishNews() {
+        auto msg = example_interfaces::msg::String();
+        msg.data = "Hi, this is robot news station from C++";
+        publisher_->publish(msg);
+    }
+    rclcpp::Publisher<example_interfaces::msg::String>::SharedPtr publisher_;
+    rclcpp::TimerBase::SharedPtr timer_;
+};
+
+int main(int argc, char **argv) {
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<RobotNewsStationNode>());
+    rclcpp::shutdown();
+    return 0;
+}
+EOF
+
+cat << "EOF" > smartphone.cpp
+#include "rclcpp/rclcpp.hpp"
+#include "example_interfaces/msg/string.hpp"
+
+class SmartphoneNode : public rclcpp::Node {
+public:
+    SmartphoneNode() : Node("smartphone") {
+        subscriber_ = this->create_subscription<example_interfaces::msg::String>(
+            "robot_news", 10, std::bind(&SmartphoneNode::callbackNews, this, std::placeholders::_1));
+        RCLCPP_INFO(this->get_logger(), "Smartphone (C++) started.");
+    }
+private:
+    void callbackNews(const example_interfaces::msg::String::SharedPtr msg) {
+        RCLCPP_INFO(this->get_logger(), "Received: %s", msg->data.c_str());
+    }
+    rclcpp::Subscription<example_interfaces::msg::String>::SharedPtr subscriber_;
+};
+
+int main(int argc, char **argv) {
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<SmartphoneNode>());
+    rclcpp::shutdown();
+    return 0;
+}
+EOF
+
+cat << "EOF" > ~/ros2_ws/src/my_cpp_pkg/CMakeLists.txt
+cmake_minimum_required(VERSION 3.8)
+project(my_cpp_pkg)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(example_interfaces REQUIRED)
+
+add_executable(cpp_node src/my_first_node.cpp)
+ament_target_dependencies(cpp_node rclcpp)
+
+add_executable(robot_news_station src/robot_news_station.cpp)
+ament_target_dependencies(robot_news_station rclcpp example_interfaces)
+
+add_executable(smartphone src/smartphone.cpp)
+ament_target_dependencies(smartphone rclcpp example_interfaces)
+
+install(TARGETS
+  cpp_node
+  robot_news_station
+  smartphone
+  DESTINATION lib/${PROJECT_NAME})
+
+ament_package()
+EOF
+
+cat << "EOF" > ~/ros2_ws/src/my_cpp_pkg/package.xml
+<?xml version="1.0"?>
+<package format="3">
+  <name>my_cpp_pkg</name>
+  <version>0.0.0</version>
+  <description>Package description</description>
+  <maintainer email="'"$USER"'@todo.todo">'"$USER"'</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>example_interfaces</depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+EOF
+
+cd ~/ros2_ws/src
+[ -d "my_robot_bringup" ] || ros2 pkg create my_robot_bringup
+cd ~/ros2_ws/src/my_robot_bringup
+rm -rf include src
+mkdir -p launch
+
+cat << "EOF" > launch/radio.launch.py
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    ld = LaunchDescription()
+
+    robot_news_station1 = Node(
+        package="my_py_pkg",
+        executable="robot_news_station",
+        name="robot_news_station1",
+        parameters=[
+            {"robot_name": "ROBOT1"},
+            {"publish_frequency": 1.0}
+        ]
+    )
+
+    robot_news_station2 = Node(
+        package="my_py_pkg",
+        executable="robot_news_station",
+        name="robot_news_station2",
+        parameters=[
+            {"robot_name": "ROBOT2"},
+            {"publish_frequency": 10.0}
+        ]
+    )
+
+    smartphone = Node(
+        package="my_py_pkg",
+        executable="smartphone",
+        name="smartphone"
+    )
+
+    ld.add_action(robot_news_station1)
+    ld.add_action(robot_news_station2)
+    ld.add_action(smartphone)
+    return ld
+EOF
+
+cat << "EOF" > launch/radio_fleet.launch.py
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    ld = LaunchDescription()
+    robot_names = ["Giskard", "BB8", "Daneel", "Jander", "C3PO"]
+    robot_news_station_nodes = []
+
+    for name in robot_names:
+        robot_news_station_nodes.append(Node(
+            package="my_py_pkg",
+            executable="robot_news_station",
+            name="robot_news_station_" + name.lower(),
+            parameters=[{"robot_name": name}]
+        ))
+    
+    smartphone = Node(
+        package="my_py_pkg",
+        executable="smartphone",
+        name="smartphone"
+    )
+
+    for node in robot_news_station_nodes:
+        ld.add_action(node)
+    ld.add_action(smartphone)
+    return ld
+EOF
+
+cat << "EOF" > CMakeLists.txt
+cmake_minimum_required(VERSION 3.8)
+project(my_robot_bringup)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+find_package(ament_cmake REQUIRED)
+
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+ament_package()
+EOF
+
+cat << "EOF" > package.xml
+<?xml version="1.0"?>
+<package format="3">
+  <name>my_robot_bringup</name>
+  <version>0.0.0</version>
+  <description>Package description</description>
+  <maintainer email="'"$USER"'@todo.todo">'"$USER"'</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>my_py_pkg</exec_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+EOF
+
+cd ~/ros2_ws
+colcon build --symlink-install
+'
